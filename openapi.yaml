@@ -1514,12 +1514,12 @@ components:
           description: Your own label for the extraction.
         prompt:
           description: >-
-            What to extract: a sentence of up to 2,500 characters, or an object naming the
+            What to extract: a sentence of up to 5,000 characters, or an object naming the
             exact output fields.
           oneOf:
             - type: string
               minLength: 1
-              maxLength: 2500
+              maxLength: 5000
             - $ref: "#/components/schemas/PromptObject"
         output_structure:
           $ref: "#/components/schemas/OutputStructure"
