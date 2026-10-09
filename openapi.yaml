@@ -56,7 +56,7 @@ paths:
         existing session. The same `upload_session_id` with different files is
         `SESSION_ALREADY_INITIALIZED`.
 
-        Rate limit: 600 requests per minute per API key, shared by the three upload endpoints.
+        Rate limit: 600 requests per minute per API key, shared by the upload endpoints.
       requestBody:
         required: true
         content:
@@ -135,7 +135,7 @@ paths:
         for 15 minutes from issue, so for a very large file request URLs in batches just before
         uploading each batch.
 
-        Rate limit: 600 requests per minute per API key, shared by the three upload endpoints.
+        Rate limit: 600 requests per minute per API key, shared by the upload endpoints.
       parameters:
         - $ref: "#/components/parameters/UploadSessionId"
       requestBody:
@@ -202,7 +202,7 @@ paths:
         that is already complete returns success again, so a retry after a dropped connection
         is safe.
 
-        Rate limit: 600 requests per minute per API key, shared by the three upload endpoints.
+        Rate limit: 600 requests per minute per API key, shared by the upload endpoints.
       parameters:
         - $ref: "#/components/parameters/UploadSessionId"
       requestBody:
@@ -270,6 +270,154 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+
+  /uploads/import:
+    post:
+      tags: [Uploads]
+      operationId: importAttachedFiles
+      summary: Import files attached in an assistant's conversation
+      description: |
+        In place of creating a session, uploading parts and completing each file, when the
+        files are attached in a conversation with an assistant that gives your app a download
+        link for each one, as ChatGPT does: creates the session, uploads every file (1 to 100)
+        from its link and completes it, in one call. The session's limits apply, and every
+        file needs one available credit. The links expire a few minutes after the assistant
+        gives them. When any link cannot be read, nothing is created and nothing is charged.
+
+        Files are independent: one that cannot be uploaded carries its `error` and is listed
+        in `failed_file_ids`, and the completed files can be submitted. A retry with the same
+        `upload_session_id` and files continues the session, and a file already completed is
+        not uploaded again.
+
+        Rate limit: 20 requests per minute per API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [upload_session_id, files]
+              properties:
+                upload_session_id:
+                  type: string
+                  pattern: "^[A-Za-z0-9._:-]{1,200}$"
+                  description: Your identifier for the session; a retry with the same one and the same files continues it.
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [file_id, file_name, url]
+                    properties:
+                      file_id:
+                        type: string
+                        pattern: "^[A-Za-z0-9._:-]{1,200}$"
+                      file_name:
+                        type: string
+                        description: The file name, ending in .pdf, .jpg, .jpeg or .png.
+                      url:
+                        type: string
+                        format: uri
+                        description: The download link the assistant gave for the attached file. Links from ChatGPT are accepted.
+            example:
+              upload_session_id: sess_002
+              files:
+                - file_id: file_001
+                  file_name: invoice-1.pdf
+                  url: https://files.oaiusercontent.com/file-abc123
+      responses:
+        "200":
+          description: The session, with each file's outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, upload_session_id, files, completed_file_ids, failed_file_ids]
+                properties:
+                  success:
+                    type: boolean
+                  upload_session_id:
+                    type: string
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [file_id, file_name, success]
+                      properties:
+                        file_id:
+                          type: string
+                        file_name:
+                          type: string
+                        success:
+                          type: boolean
+                        error:
+                          type: object
+                          description: Present when the file could not be uploaded.
+                          properties:
+                            code:
+                              type: string
+                            message:
+                              type: string
+                            retryable:
+                              type: boolean
+                            details:
+                              type: object
+                              nullable: true
+                  completed_file_ids:
+                    type: array
+                    items:
+                      type: string
+                  failed_file_ids:
+                    type: array
+                    items:
+                      type: string
+              example:
+                success: true
+                upload_session_id: sess_002
+                files:
+                  - file_id: file_001
+                    file_name: invoice-1.pdf
+                    success: true
+                completed_file_ids: [file_001]
+                failed_file_ids: []
+        "400":
+          description: >-
+            `INVALID_INPUT` (a link that is not an assistant's download link for an attached
+            file among them), or the session's own refusals (`DUPLICATE_FILE_NAME`,
+            `DUPLICATE_FILE_ID`, `FILE_TOO_LARGE`, `TOTAL_UPLOAD_SIZE_LIMIT_EXCEEDED`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "402":
+          description: "`INSUFFICIENT_CREDITS`: fewer available credits than files."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: "`SESSION_ALREADY_INITIALIZED`: this `upload_session_id` is in use."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          description: >-
+            `FILE_LINK_UNREADABLE`: a link could not be read, most often because it expired;
+            `details.file_names` names the files. Attach them again and import with the new links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /extractions:
     post:
@@ -1151,7 +1299,7 @@ components:
         extraction_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
         error:
           code: INSUFFICIENT_CREDITS
-          message: Not enough credits for this extraction; details shows the credits required and your balance. Buy credits at https://invoicedataextraction.com/dashboard?view=Billing or submit fewer pages, then submit again.
+          message: Not enough credits for this extraction; details shows the credits required and your balance. Submit fewer pages, or buy credits in the dashboard at invoicedataextraction.com (the plans and prices are at https://invoicedataextraction.com/pricing), then submit again.
           retryable: false
           details:
             credits_required: 25
@@ -1835,7 +1983,9 @@ components:
       type: string
       description: |
         Why an extraction failed. Retryable codes may succeed when submitted again with a new
-        `submission_id`: `CONCURRENT_TASK_LIMIT`, `SUBMISSION_STALLED`, `INTERNAL_ERROR`. The
+        `submission_id`: `CONCURRENT_TASK_LIMIT` (as many extractions running as the account allows, 15 by
+        default and more on request, counting those started in the web app),
+        `SUBMISSION_STALLED`, `INTERNAL_ERROR`. The
         others need a change first: `INSUFFICIENT_CREDITS` (details: `credits_required`,
         `credits_balance`, `credits_reserved`), `FILE_PAGE_LIMIT_EXCEEDED` and `ENCRYPTED_FILE`
         (details: `file_names`), `NO_PAGES_FOUND`, `VALIDATION_FAILED`, `PROMPT_REJECTED`,
