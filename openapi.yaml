@@ -431,7 +431,10 @@ paths:
         rows; `options.ask_questions: true` lets the extraction stop and ask when the documents
         leave something unsettled.
 
-        Idempotent: a retry with the same `submission_id` returns the existing extraction.
+        Idempotent: the same request sent again with the same `submission_id` returns the
+        existing extraction. Any other request under a `submission_id` that already belongs to
+        an extraction is refused with `SUBMISSION_ID_ALREADY_USED`; use a new `submission_id`
+        for each extraction.
         The task appears in the web dashboard alongside extractions submitted there.
 
         Rate limit: 30 requests per minute per API key.
@@ -490,6 +493,27 @@ paths:
           $ref: "#/components/responses/InvalidInput"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "409":
+          description: >-
+            `SUBMISSION_ID_ALREADY_USED`: this `submission_id` already belongs to an extraction,
+            and the request is not the one that created it. `details.extraction_id` is that
+            extraction; `details.differing_fields` lists which of `upload_session_id`,
+            `file_ids`, `prompt`, `output_structure` and `options` differ. Use a new
+            `submission_id` for a new extraction; to retry the earlier request, read that
+            extraction with `getExtraction` instead of submitting again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: SUBMISSION_ID_ALREADY_USED
+                  message: "This submission_id already belongs to the extraction in details.extraction_id, and this request is not the one that created it: details.differing_fields lists what differs. To run a new extraction, submit again with a new submission_id. If you meant to retry the earlier request, do not submit again: get that extraction with GET /v1/extractions/{extraction_id}."
+                  retryable: false
+                  details:
+                    extraction_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                    differing_fields: [upload_session_id]
         "429":
           $ref: "#/components/responses/RateLimited"
         "500":
@@ -1299,7 +1323,7 @@ components:
         extraction_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
         error:
           code: INSUFFICIENT_CREDITS
-          message: Not enough credits for this extraction; details shows the credits required and your balance. Submit fewer pages, or buy credits in the dashboard at invoicedataextraction.com (the plans and prices are at https://invoicedataextraction.com/pricing), then submit again.
+          message: Not enough credits for this extraction; details shows the credits required and your balance. Submit fewer pages, or buy credits in the dashboard at invoicedataextraction.com (the plans and prices are at https://invoicedataextraction.com/pricing), then submit again with a new submission_id.
           retryable: false
           details:
             credits_required: 25
@@ -1336,6 +1360,7 @@ components:
         - EXTRACTION_NOT_FOUND
         - INTERNAL_ERROR
         - SUBMISSIONS_PAUSED
+        - SUBMISSION_ID_ALREADY_USED
         - DUPLICATE_FILE_NAME
         - DUPLICATE_FILE_ID
         - FILE_TOO_LARGE
